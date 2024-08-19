@@ -439,13 +439,14 @@ def draw_metric(tsv_file, plot_config, save_name='', preprcs_df=lambda *x: x):
             ax = axs[-1, ci]
             ax.set_xlabel(f'{pcrf[0]}={col_v}', size=pcfg['font_size'])
     else:
-        ax.set_xlabel(x_label, fontsize=pcfg['font_size'])        
-    
+        ax.set_xlabel(x_label, fontsize=pcfg['font_size']) 
+               
     if len(pcrf)>1:
         fig.supylabel(y_label, fontsize=pcfg['font_size'])
         for ri, row_v in enumerate(row_vs[::-1]):
             axs[ri, 0].set_ylabel(f'{pcrf[1]}={row_v}', size=pcfg['font_size'])
     else:
+        ax = axs[0, 0]
         ax.set_ylabel(y_label, fontsize=pcfg['font_size'])
         
                 
@@ -464,6 +465,7 @@ def draw_metric(tsv_file, plot_config, save_name='', preprcs_df=lambda *x: x):
             extra = {'linewidth': 0} if s=='marker' else {}
                 
             vs = sorted(set(df.index.get_level_values(k)))
+            vs = [v.replace('_', ' ').capitalize() if isinstance(v, str) else v for v in vs]
             legendlines += [lines.Line2D([], [], alpha=0)] + \
                         [lines.Line2D([], [], **{**pcfg['line_style'], **base_styles, **first_styles, **extra, **{s: ss}}) for ss in [*style_dict[s]][:len(vs)]] + \
                         ([lines.Line2D([], [], alpha=0) for _ in range(max_row-len(vs))] if is_wide else [])
