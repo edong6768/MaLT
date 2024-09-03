@@ -1033,6 +1033,8 @@ class Experiment:
   def update_log(self, config, status=None, **metric_dict):
     if status==None: 
       status = self.__RUNNING
+    
+    self.log.load_tsv()  
     self.log.add_result(config, **metric_dict,
                         **self.__curr_runinfo.update_and_get(),
                         status=status)
@@ -1045,62 +1047,58 @@ class Experiment:
     start_t = datetime.now()
     
     if self.filelock:
-      logging.info(self.log.filelock.is_locked)
-      logging.info(self.log.filelock.id)
+      logging.info((self.log.filelock.is_locked, self.log.filelock.id))
+      self.log.filelock.acquire() # initially obtain filelock before running experiments
       
-      self.log.filelock.acquire()
+    # run experiment plans 
+    for i, config in enumerate(self.configs):
+      
       self.log.load_tsv()
+      metric_dict, info_dict = self.get_metric_info(config)
       
-    # check for left-over experiments (10 times for now)
-    for _ in range(10):
-      # run experiment plans 
-      for i, config in enumerate(self.configs):
-        
-        if self.filelock: self.log.filelock.acquire() ##################################################################
-        self.log.load_tsv()
-        
-        metric_dict, info_dict = self.get_metric_info(config)
-        
-        # skip already executed runs
-        if info_dict.get('status') in {self.__RUNNING, self.__COMPLETED}: continue
-        
-        self.__curr_runinfo = RunInfo(prev_duration=pd.to_timedelta(info_dict.get('duration', '0')))
-        
-        # if config not in self.log or status==self.__FAILED
-        if self.configs_save:
-          self.update_log(config, **metric_dict, status=self.__RUNNING)
+      # skip already executed runs
+      if info_dict.get('status') in {self.__RUNNING, self.__COMPLETED}: continue
+      
+      # new run info
+      self.__curr_runinfo = RunInfo(prev_duration=pd.to_timedelta(info_dict.get('duration', '0')))
+      
+      # if config not in self.log or status==self.__FAILED
+      if self.configs_save:
+        self.update_log(config, **metric_dict, status=self.__RUNNING)
 
-        if self.filelock: self.log.filelock.release(force=True) ##################################################################
-        
-        logging.info('###################################')
-        logging.info(f'   Experiment count : {i+1}/{len(self.configs)}')
-        logging.info('###################################') 
+      # release filelock before running experiment
+      if self.filelock: self.log.filelock.release(force=True)
+      
+      logging.info('###################################')
+      logging.info(f'   Experiment count : {i+1}/{len(self.configs)}')
+      logging.info('###################################') 
 
-
-        try:
-          exp_func = self.exp_func
-          if self.timeout:
-            exp_func = settimeout_func(exp_func, timeout = self.timeout - (datetime.now()-start_t).total_seconds())
-          if self.checkpoint:
-            metric_dict = exp_func(config, self)
-          else:
-            metric_dict = exp_func(config)
-          status = self.__COMPLETED
+      try:
+        exp_func = self.exp_func
+        if self.timeout:
+          exp_func = settimeout_func(exp_func, timeout = self.timeout - (datetime.now()-start_t).total_seconds())
+        if self.checkpoint:
+          metric_dict = exp_func(config, self)
+        else:
+          metric_dict = exp_func(config)
+        status = self.__COMPLETED
+      
+      except Exception as exc:
+        metric_dict, _ = self.get_metric_info(config)
+        status = self.__FAILED
         
-        except Exception as exc:
-          metric_dict, _ = self.get_metric_info(config)
-          status = self.__FAILED
+        if isinstance(exc, FuncTimeoutError):
+          logging.error(f"Experiment timeout ({self.timeout}s) occured:")
+          raise exc
+        else:
+          logging.error(f"Experiment failure occured:\n{traceback.format_exc()}{exc}")
           
-          if isinstance(exc, FuncTimeoutError):
-            logging.error(f"Experiment timeout ({self.timeout}s) occured:")
-            raise exc
-          else:
-            logging.error(f"Experiment failure occured:\n{traceback.format_exc()}{exc}")
-            
-        finally:
-          self.update_log(config, **metric_dict, status=status)
-          logging.info("Saved experiment data to log.")
-      
+      finally:
+        if self.filelock: self.log.filelock.acquire() # obtain filelock before updating log
+        self.update_log(config, **metric_dict, status=status)
+        logging.info("Saved experiment data to log.")
+    
+    if self.filelock: self.log.filelock.release(force=True) # release filelock after running all experiments
     logging.info('Complete experiments.')
       
       
